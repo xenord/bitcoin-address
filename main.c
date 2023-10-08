@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <secp256k1.h>
 #include <string.h>
+#include <bloom.h>
 
 #include "hex_utils.h"
 
@@ -13,7 +14,7 @@ secp256k1_context_destroy(ctx);
 */
 
 /*
-    Compile with  "gcc hex_utils.c main.c -lsecp256k1 -o main.o"
+    Compile with  "gcc hex_utils.c main.c -lsecp256k1 -lbloom.2 -o main.o"
 */
 
 int print_public_key(char *arr, int size) {
@@ -77,11 +78,46 @@ int get_uncompressed_pubkey(secp256k1_context* ctx, secp256k1_pubkey pubkey, uns
     return 1;
 }
 
+void initialize_bloom(char *path, struct bloom *bloom) {
+    FILE *stream = fopen(path, "r");
+    int items = 0;
+
+	char line[1024];
+	while (fgets(line, 1024, stream)) {
+		char *tmp = strdup(line);
+        if (tmp != NULL) {
+            bloom_add(bloom, tmp, strlen(tmp));
+            items++;
+            free(tmp);
+        }
+	}
+	fclose(stream);
+}
+
+int get_file_lines(char *path) {
+    FILE *stream = fopen(path, "r");
+    int items = 0;
+
+	char line[1024];
+	while (fgets(line, 1024, stream)) {
+        if (line != NULL) {
+            items++;
+        }
+	}
+	fclose(stream);
+    return items;
+}
+
 int main(int argc, char const *argv[]) {
     unsigned char privkey[32] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};
+    struct bloom bloom;
     
-
-
+    int n_lines = get_file_lines("pub_keys.txt");
+    if (bloom_init2(&bloom, n_lines, 0.000001) == 1) {
+        printf("Bloom filter initialization failed\n");
+        return 1;
+    }
+    initialize_bloom("pub_keys.txt", &bloom);
 
 
     for (int i = 0; i < 100; i++) {
@@ -97,8 +133,18 @@ int main(int argc, char const *argv[]) {
         if (get_compressed_pubkey(ctx, pubkey, serialized_pubkey, sizeof(serialized_pubkey)) == 0) {
             return 1;
         }
+
         format_public_key(serialized_pubkey, hex_c_pubkey, 67);
-        /*printf("Compressed pubkey "); print_public_key(hex_c_pubkey, 67);*/
+
+        if (bloom_check(&bloom, hex_c_pubkey, 67) == 1) {
+            printf("FOUND\n");
+            printf("Compressed pubkey "); print_public_key(hex_c_pubkey, 67);
+            printf("Privkey ");
+            for (int x = 0; x < 32; x++) {
+                printf("%02x ", privkey[x]);
+            }
+            printf("\n\n");
+        }
 
         /*char hex_u_pubkey[131];
         memset(serialized_pubkey, 0x00, 65);
@@ -109,10 +155,6 @@ int main(int argc, char const *argv[]) {
         /*printf("Uncompressed pubkey "); print_public_key(hex_u_pubkey, 131);*/
         
         
-        /*for (int x = 0; x < 32; x++) {
-            printf("%02x ", privkey[x]);
-        }
-        printf("\n");*/
         secp256k1_context_destroy(ctx);
         increment(privkey, 32, 0x01);
     }
